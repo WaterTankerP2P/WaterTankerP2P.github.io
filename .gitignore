@@ -1,0 +1,7 @@
+# Local dev tooling (not needed by the static site)
+.claude/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
