@@ -1,25 +1,22 @@
 /*
- * firebase-config.js — paste your own Firebase project's config here to turn
- * on REAL cross-device mode (matching, chat, live tracking). Until you do, the
- * app runs in local mode (this browser only, with simulated drivers).
+ * firebase-config.js — Firebase project config for AquaDrive CLOUD mode
+ * (real cross-device matching, chat, live tracking). Cash-on-Delivery only.
  *
- * How to fill this in (free, ~5 minutes — see README "Going live with Firebase"):
- *   1. https://console.firebase.google.com  →  Add project
- *   2. Build → Realtime Database → Create database (start in test or use the
- *      security rules from the README)
- *   3. Build → Authentication → Sign-in method → enable "Anonymous"
- *   4. Project settings → Your apps → Web app (</>)  → copy the config values
- *   5. Paste them below. (These web values are safe to expose publicly; access
- *      is controlled by Realtime Database security rules, not by hiding them.)
+ * These web config values are safe to expose publicly — access is controlled
+ * by Realtime Database security rules + Firebase Auth, not by hiding these.
  *
- * IMPORTANT: databaseURL is required for Realtime Database.
+ * For cloud mode to actually connect, the Firebase project must have:
+ *   1. Realtime Database created          (done — databaseURL below)
+ *   2. Authentication → Anonymous ENABLED (required for sign-in)
+ *   3. Realtime Database security rules    (see README "Going live with Firebase")
+ * If any are missing, the app safely falls back to local mode.
  */
 window.AQUA_FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",      // e.g. https://YOUR-PROJECT-default-rtdb.firebaseio.com
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyBmBBI9Bswr3IabUPLQ0ndUQcAL0WPsnaE",
+  authDomain: "watertankerp2p.firebaseapp.com",
+  databaseURL: "https://watertankerp2p-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "watertankerp2p",
+  storageBucket: "watertankerp2p.firebasestorage.app",
+  messagingSenderId: "100936882060",
+  appId: "1:100936882060:web:c22724995d91d1c719a8a9"
 };
