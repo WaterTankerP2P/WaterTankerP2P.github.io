@@ -9,6 +9,8 @@
   // ---------- module state ----------
   var state = {
     booting: true,        // true until the backend (local/cloud) is decided
+    cloudReady: false,    // Firebase connected & auth state known
+    cloudFailed: false,   // cloud was configured but couldn't connect
     tab: 'home',          // home | activity | profile
     activeRequestId: null, // request currently being tracked (customer)
     cancelOffers: null,    // cancel fn for the offer simulation (local mode)
@@ -133,7 +135,10 @@
 
   // ---------------- ONBOARDING ----------------
   function renderOnboarding() {
-    if (DB.isCloud()) { renderAuthScreen(); return; }
+    // Show the account screen optimistically as soon as we know a Firebase
+    // project is configured — don't wait for the connection to finish.
+    var cloudy = (typeof AquaCloud !== 'undefined' && AquaCloud.enabled() && !state.cloudFailed);
+    if (cloudy) { renderAuthScreen(); return; }
     renderLocalOnboarding();
   }
 
@@ -228,6 +233,7 @@
     renderAuthFields();
 
     el('auth-go').addEventListener('click', function () {
+      if (!state.cloudReady) { toast('Connecting to server… try again in a moment'); return; }
       var role = getRole();
       var btn = el('auth-go');
       btn.disabled = true;
@@ -1530,11 +1536,17 @@
 
     window.addEventListener('storage', onStorage);
 
-    render(); // splash while the backend is decided
+    // Boot the UI immediately — don't block on Firebase. A returning user
+    // (cached profile) sees the app instantly; Firebase connects in the
+    // background and reconciles the session when ready.
+    state.booting = false;
+    render();
+
     DB.init(function (mode) {
       if (mode === 'cloud') {
+        state.cloudReady = true;
         console.info('AquaDrive: connected to Firebase (cloud mode)');
-        // react to later auth changes (e.g. sign-out from another tab)
+        // react to later auth changes (e.g. sign-out)
         DB.onAuth(function () {
           resolveCloudUser(function () {
             stopCustomerWatch(); stopDriverWatch(); stopDriverTrip();
@@ -1543,13 +1555,13 @@
           });
         });
         resolveCloudUser(function () {
-          state.booting = false;
           var u = Store.getUser();
           if (u && u.role === 'driver' && state.tab === 'home') startDriverWatch();
           render();
         });
       } else {
-        state.booting = false;
+        // cloud was configured but couldn't connect → fall back to local
+        state.cloudFailed = (typeof AquaCloud !== 'undefined' && AquaCloud.enabled());
         render();
       }
     });

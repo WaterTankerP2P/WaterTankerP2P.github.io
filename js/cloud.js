@@ -39,14 +39,15 @@
   function loadSdk(done) {
     if (global.firebase && global.firebase.database) { done(true); return; }
     var finished = false;
-    var to = setTimeout(function () { if (!finished) { finished = true; done(false); } }, 7000);
+    var to = setTimeout(function () { if (!finished) { finished = true; done(false); } }, 9000);
     function fail() { if (finished) return; finished = true; clearTimeout(to); done(false); }
+    // firebase-app must load first; auth + database only depend on app, so
+    // fetch those two in PARALLEL (not chained) to cut mobile startup time.
     inject(SDK + 'firebase-app-compat.js', function () {
-      inject(SDK + 'firebase-auth-compat.js', function () {
-        inject(SDK + 'firebase-database-compat.js', function () {
-          if (finished) return; finished = true; clearTimeout(to); done(true);
-        }, fail);
-      }, fail);
+      var need = 2;
+      function one() { if (--need === 0 && !finished) { finished = true; clearTimeout(to); done(true); } }
+      inject(SDK + 'firebase-auth-compat.js', one, fail);
+      inject(SDK + 'firebase-database-compat.js', one, fail);
     }, fail);
   }
 
