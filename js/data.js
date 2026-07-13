@@ -47,6 +47,16 @@
       }
     },
 
+    /* ---------------- auth (cloud only) ---------------- */
+    currentUid: function () { return this.isCloud() ? AquaCloud.currentUid() : null; },
+    onAuth: function (cb) { if (this.isCloud()) AquaCloud.onAuth(cb); },
+    signInGuest: function (cb) { AquaCloud.signInGuest(cb); },
+    register: function (email, pass, cb) { AquaCloud.register(email, pass, cb); },
+    login: function (email, pass, cb) { AquaCloud.login(email, pass, cb); },
+    signOut: function (cb) { if (this.isCloud()) AquaCloud.signOutUser(cb); else { cb && cb(); } },
+    saveProfile: function (uid, profile, cb) { if (this.isCloud()) AquaCloud.saveProfile(uid, profile, cb); else { cb && cb(); } },
+    loadProfile: function (uid, cb) { if (this.isCloud()) AquaCloud.loadProfile(uid, cb); else cb(null); },
+
     /* ---------------- requests / matching ---------------- */
     createRequest: function (req, cb) {
       cb = cb || noop;

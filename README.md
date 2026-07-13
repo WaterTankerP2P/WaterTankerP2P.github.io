@@ -139,35 +139,44 @@ tracking** — all on Firebase's **free Spark tier**. Payment stays **COD**.
 
 1. Go to <https://console.firebase.google.com> → **Add project** (free).
 2. **Build → Realtime Database → Create database.**
-3. **Build → Authentication → Sign-in method → enable _Anonymous_.**
+3. **Build → Authentication → Sign-in method** → enable **Anonymous** (for the
+   "Guest" option) and **Email/Password** (for real accounts / separate driver &
+   customer sign-in).
 4. **Project settings → Your apps → Web (`</>`)** → copy the config and paste the
    values into [`js/firebase-config.js`](js/firebase-config.js)
    (these web values are safe to expose; access is controlled by the rules below).
-5. In **Realtime Database → Rules**, paste:
-
-   ```json
-   {
-     "rules": {
-       "requests":  { ".read": "auth != null", ".indexOn": ["status"], "$id": { ".write": "auth != null" } },
-       "chats":     { ".read": "auth != null", "$id": { ".write": "auth != null" } },
-       "tracking":  { ".read": "auth != null", "$id": { ".write": "auth != null" } },
-       "drivers":   { ".read": "auth != null", "$id": { ".write": "auth != null" } },
-       "reviews":   { ".read": "auth != null", ".write": "auth != null" }
-     }
-   }
-   ```
+5. In **Realtime Database → Rules**, paste the contents of
+   [`firebase-rules.json`](firebase-rules.json) and **Publish**.
 
 That's it — reload the app. The console logs `connected to Firebase (cloud mode)`.
 If the config is empty or the connection fails, it silently falls back to local mode.
 
+### Identity & the hardened rules
+
+Sign-in is per **role**: on first open you pick **Customer** or **Tanker Driver**,
+then either **create an account** (email + password, works across devices) or
+continue as **Guest** (anonymous, tied to that device). Your **Firebase Auth UID is
+the identity** used everywhere, which is what lets the rules enforce ownership.
+
+[`firebase-rules.json`](firebase-rules.json) is meaningfully hardened (not just
+"any signed-in user"):
+- `/users/$uid` and `/drivers/$uid` — writable **only by that user**.
+- `/requests/$id` — a request can only be **created by its own customer**; afterwards
+  only the **owning customer or the assigned driver** can update it.
+- `/requests/$id/offers/$oid` — an offer's `driverId` **must equal the sender's UID**
+  (drivers can't bid as someone else).
+- `/ratings/$uid` — the review aggregate lives here (separate from the profile) so a
+  customer can rate a driver without being able to edit that driver's profile.
+- `chats` / `tracking` / `reviews` — any signed-in user (participants) may write.
+
 > **Try it across two devices:** open the live URL on your phone as **Customer**
-> and on your laptop as **Driver** (Profile → Driver mode). Place a request on the
-> phone; it appears on the laptop. Send an offer; accept it on the phone. The driver
-> screen then shares live GPS and you'll see the 🚛 move on the customer's map.
+> and on your laptop as **Driver**. Place a request on the phone; it appears on the
+> laptop. Send an offer; accept it on the phone. The driver screen then shares live
+> GPS and you'll see the 🚛 move on the customer's map.
 >
-> The free Spark tier (1 GB stored, 10 GB/month transfer, anonymous auth) is plenty
-> for a small operation. The rules above require sign-in but let any signed-in user
-> read/write — tighten them (per-owner writes, validation) before a real launch.
+> Free Spark tier (1 GB stored, 10 GB/month transfer) is plenty for a small operation.
+> Before a large public launch consider adding field-level `.validate` rules and a
+> privacy policy (you collect location).
 
 ---
 

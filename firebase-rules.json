@@ -1,0 +1,50 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "drivers": {
+      ".read": "auth != null",
+      "$did": {
+        ".write": "auth != null && auth.uid === $did"
+      }
+    },
+    "ratings": {
+      ".read": "auth != null",
+      "$did": {
+        ".write": "auth != null"
+      }
+    },
+    "requests": {
+      ".read": "auth != null",
+      ".indexOn": ["status", "customerId"],
+      "$id": {
+        ".write": "auth != null && ( (!data.exists() && newData.child('customerId').val() === auth.uid) || (data.exists() && (data.child('customerId').val() === auth.uid || data.child('driver/driverId').val() === auth.uid || newData.child('driver/driverId').val() === auth.uid)) )",
+        "offers": {
+          "$oid": {
+            ".write": "auth != null && newData.child('driverId').val() === auth.uid"
+          }
+        }
+      }
+    },
+    "chats": {
+      "$id": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "tracking": {
+      "$id": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "reviews": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}

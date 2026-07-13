@@ -13,6 +13,9 @@
 
   var SDK = 'https://www.gstatic.com/firebasejs/10.12.2/';
   var db = null;
+  var auth = null;
+  var _uid = null;
+  var authCb = null;      // notified on later auth-state changes (login/logout)
   var connecting = false;
   var pending = [];
 
@@ -70,9 +73,15 @@
         try {
           global.firebase.initializeApp(global.AQUA_FIREBASE_CONFIG);
           db = global.firebase.database();
-          global.firebase.auth().signInAnonymously()
-            .then(function () { AquaCloud.ready = true; flush(true); })
-            .catch(function (e) { console.warn('AquaCloud auth failed:', e && e.message); flush(false); });
+          auth = global.firebase.auth();
+          var firstResolved = false;
+          // Resolve connect() once the first auth state is known (persisted
+          // sessions restore here), then keep notifying the app of changes.
+          auth.onAuthStateChanged(function (u) {
+            _uid = u ? u.uid : null;
+            if (!firstResolved) { firstResolved = true; AquaCloud.ready = true; flush(true); }
+            else if (authCb) { try { authCb(_uid); } catch (e) {} }
+          });
         } catch (e) {
           console.warn('AquaCloud init failed:', e && e.message);
           flush(false);
@@ -84,6 +93,28 @@
         var cbs = pending.slice(); pending.length = 0;
         cbs.forEach(function (fn) { try { fn(success); } catch (e) {} });
       }
+    },
+
+    /* -------- auth (email/password + guest) -------- */
+    currentUid: function () { return _uid; },
+    onAuth: function (cb) { authCb = cb; },
+    signInGuest: function (cb) {
+      auth.signInAnonymously().then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    },
+    register: function (email, pass, cb) {
+      auth.createUserWithEmailAndPassword(email, pass).then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    },
+    login: function (email, pass, cb) {
+      auth.signInWithEmailAndPassword(email, pass).then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    },
+    signOutUser: function (cb) {
+      auth.signOut().then(function () { cb && cb(); }, function () { cb && cb(); });
+    },
+    saveProfile: function (uid, profile, cb) {
+      db.ref('users/' + uid).set(profile).then(ok(cb), errcb(cb));
+    },
+    loadProfile: function (uid, cb) {
+      db.ref('users/' + uid).once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
     },
 
     /* -------- requests / matching -------- */
@@ -147,27 +178,36 @@
       return function () { ref.off('value', h); };
     },
 
-    /* -------- drivers / reviews -------- */
+    /* -------- drivers / reviews --------
+     * Driver PROFILE lives at /drivers/{uid} (owner-writable only).
+     * The rating AGGREGATE lives at /ratings/{uid} so reviewers (customers,
+     * not the driver) can update it without touching the driver's profile. */
     registerDriver: function (d) {
-      db.ref('drivers/' + d.id).transaction(function (cur) {
-        cur = cur || {};
-        cur.id = d.id; cur.name = d.name; cur.phone = d.phone;
-        cur.vehicle = d.vehicle; cur.capacityL = d.capacityL; cur.waterTypes = d.waterTypes;
-        if (cur.ratingSum == null) cur.ratingSum = d.ratingSum || 0;
-        if (cur.ratingCount == null) cur.ratingCount = d.ratingCount || 0;
-        if (cur.completed == null) cur.completed = d.completed || 0;
-        return cur;
+      db.ref('drivers/' + d.id).update({
+        id: d.id, name: d.name, phone: d.phone,
+        vehicle: d.vehicle, capacityL: d.capacityL, waterTypes: d.waterTypes,
+        completed: d.completed || 0
       });
     },
     getDriver: function (id, cb) {
-      db.ref('drivers/' + id).once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
+      Promise.all([
+        db.ref('drivers/' + id).once('value'),
+        db.ref('ratings/' + id).once('value')
+      ]).then(function (snaps) {
+        var prof = snaps[0].val();
+        var r = snaps[1].val() || {};
+        if (!prof) { cb(null); return; }
+        prof.ratingSum = r.sum || 0;
+        prof.ratingCount = r.count || 0;
+        cb(prof);
+      }, function () { cb(null); });
     },
     addReview: function (review, cb) {
       db.ref('reviews').push(review);
-      db.ref('drivers/' + review.driverId).transaction(function (cur) {
-        cur = cur || { ratingSum: 0, ratingCount: 0 };
-        cur.ratingSum = (cur.ratingSum || 0) + review.stars;
-        cur.ratingCount = (cur.ratingCount || 0) + 1;
+      db.ref('ratings/' + review.driverId).transaction(function (cur) {
+        cur = cur || { sum: 0, count: 0 };
+        cur.sum = (cur.sum || 0) + review.stars;
+        cur.count = (cur.count || 0) + 1;
         return cur;
       }).then(ok(cb), errcb(cb));
     },

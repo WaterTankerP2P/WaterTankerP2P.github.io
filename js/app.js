@@ -8,6 +8,7 @@
 
   // ---------- module state ----------
   var state = {
+    booting: true,        // true until the backend (local/cloud) is decided
     tab: 'home',          // home | activity | profile
     activeRequestId: null, // request currently being tracked (customer)
     cancelOffers: null,    // cancel fn for the offer simulation (local mode)
@@ -72,6 +73,7 @@
   // ===================================================================
   function render() {
     stopTracking(); // any live-tracking animation is restarted by the en-route screen
+    if (state.booting) { renderSplash(); return; }
     var user = Store.getUser();
     if (!user) { renderOnboarding(); return; }
 
@@ -117,8 +119,26 @@
 
   function setView(html) { el('view').innerHTML = html; }
 
+  // ---------------- SPLASH ----------------
+  function renderSplash() {
+    el('topbar').classList.add('hidden');
+    el('bottomnav').classList.add('hidden');
+    setView(
+      '<div class="onboard splash">' +
+        '<div class="brand-big"><span class="logo-drop">💧</span><h1>AquaDrive</h1>' +
+          '<p class="tag">Connecting…</p><div class="radar" style="margin-top:24px"></div></div>' +
+      '</div>'
+    );
+  }
+
   // ---------------- ONBOARDING ----------------
   function renderOnboarding() {
+    if (DB.isCloud()) { renderAuthScreen(); return; }
+    renderLocalOnboarding();
+  }
+
+  // Local mode (no Firebase reachable): lightweight name/phone/role, no accounts.
+  function renderLocalOnboarding() {
     el('topbar').classList.add('hidden');
     el('bottomnav').classList.add('hidden');
     setView(
@@ -126,41 +146,192 @@
         '<div class="brand-big"><span class="logo-drop">💧</span><h1>AquaDrive</h1>' +
           '<p class="tag">Name your price for water delivery</p></div>' +
         '<div class="card">' +
+          roleGridHtml('customer') +
           '<label>Your name</label>' +
           '<input id="ob-name" type="text" placeholder="e.g. Umair Ahmed" autocomplete="name" />' +
           '<label>Phone number</label>' +
           '<input id="ob-phone" type="tel" placeholder="e.g. +92 300 1234567" autocomplete="tel" />' +
-          '<label>I want to use AquaDrive as</label>' +
-          '<div class="role-grid">' +
-            '<button class="role-card selected" data-role="customer">' +
-              '<span class="role-ico">🏠</span><b>Customer</b><small>I need water delivered</small></button>' +
-            '<button class="role-card" data-role="driver">' +
-              '<span class="role-ico">🚛</span><b>Tanker Driver</b><small>I deliver water</small></button>' +
-          '</div>' +
+          '<div id="lo-driver" style="display:none">' + driverFieldsHtml() + '</div>' +
           '<button id="ob-go" class="btn-primary block">Get started</button>' +
-          '<p class="fineprint">Cash on delivery only · Data stays in your browser</p>' +
+          '<p class="fineprint">Cash on delivery only · Offline mode (this device)</p>' +
         '</div>' +
       '</div>'
     );
-
-    var role = 'customer';
-    var cards = document.querySelectorAll('.role-card');
-    cards.forEach(function (c) {
-      c.addEventListener('click', function () {
-        cards.forEach(function (x) { x.classList.remove('selected'); });
-        c.classList.add('selected');
-        role = c.dataset.role;
-      });
+    var role = wireRoleGrid(function (r) {
+      var d = el('lo-driver'); if (d) d.style.display = (r === 'driver') ? '' : 'none';
     });
     el('ob-go').addEventListener('click', function () {
       var name = el('ob-name').value.trim();
       var phone = el('ob-phone').value.trim();
       if (!name) { toast('Please enter your name'); return; }
       if (!phone) { toast('Please enter your phone number'); return; }
-      Store.saveUser({ id: Store.uid('usr'), name: name, phone: phone, role: role, createdAt: Date.now() });
+      var user = { id: Store.uid('usr'), name: name, phone: phone, role: role(), createdAt: Date.now() };
+      addDriverFieldsTo(user);
+      Store.saveUser(user);
+      if (user.role === 'driver') ensureSelfDriver(user);
       state.tab = 'home';
       render();
     });
+  }
+
+  // Cloud mode: real accounts (email + password) or guest, separate per role.
+  function renderAuthScreen() {
+    el('topbar').classList.add('hidden');
+    el('bottomnav').classList.add('hidden');
+    var mode = 'register'; // register | login | guest
+    setView(
+      '<div class="onboard">' +
+        '<div class="brand-big"><span class="logo-drop">💧</span><h1>AquaDrive</h1>' +
+          '<p class="tag">Name your price for water delivery</p></div>' +
+        '<div class="card">' +
+          '<div class="switch-roles auth-tabs">' +
+            '<button class="seg on" data-mode="register">Create account</button>' +
+            '<button class="seg" data-mode="login">Sign in</button>' +
+            '<button class="seg" data-mode="guest">Guest</button>' +
+          '</div>' +
+          '<div id="auth-role">' + roleGridHtml('customer') + '</div>' +
+          '<div id="auth-fields"></div>' +
+          '<button id="auth-go" class="btn-primary block">Create account</button>' +
+          '<p id="auth-note" class="fineprint">Cash on delivery only · Synced across devices</p>' +
+        '</div>' +
+      '</div>'
+    );
+
+    var getRole = wireRoleGrid(function () { renderAuthFields(); });
+
+    document.querySelectorAll('.auth-tabs .seg').forEach(function (b) {
+      b.addEventListener('click', function () {
+        document.querySelectorAll('.auth-tabs .seg').forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        mode = b.dataset.mode;
+        el('auth-role').style.display = (mode === 'login') ? 'none' : '';
+        el('auth-go').textContent = mode === 'register' ? 'Create account' : (mode === 'login' ? 'Sign in' : 'Continue as guest');
+        renderAuthFields();
+      });
+    });
+
+    function renderAuthFields() {
+      var role = getRole();
+      var html = '';
+      if (mode !== 'login') {
+        html += '<label>Your name</label><input id="au-name" type="text" placeholder="e.g. Umair Ahmed" autocomplete="name" />' +
+                '<label>Phone number</label><input id="au-phone" type="tel" placeholder="e.g. +92 300 1234567" autocomplete="tel" />';
+        if (role === 'driver') html += driverFieldsHtml();
+      }
+      if (mode !== 'guest') {
+        html += '<label>Email</label><input id="au-email" type="email" placeholder="you@example.com" autocomplete="email" />' +
+                '<label>Password</label><input id="au-pass" type="password" placeholder="At least 6 characters" autocomplete="' +
+                (mode === 'register' ? 'new-password' : 'current-password') + '" />';
+      }
+      el('auth-fields').innerHTML = html;
+    }
+    renderAuthFields();
+
+    el('auth-go').addEventListener('click', function () {
+      var role = getRole();
+      var btn = el('auth-go');
+      btn.disabled = true;
+
+      function fail(msg) { btn.disabled = false; toast(msg); }
+      function finishProfile(uid, extra) {
+        var user = Object.assign({ id: uid, role: role, createdAt: Date.now() }, extra);
+        DB.saveProfile(uid, user);
+        Store.saveUser(user);
+        if (user.role === 'driver') ensureSelfDriver(user);
+        state.tab = 'home';
+        render();
+      }
+
+      if (mode === 'login') {
+        var email = (el('au-email').value || '').trim();
+        var pass = el('au-pass').value || '';
+        if (!email || !pass) return fail('Enter email and password');
+        DB.login(email, pass, function (err, uid) {
+          if (err) return fail(authErr(err));
+          DB.loadProfile(uid, function (p) {
+            if (!p) return fail('No profile found — try Create account');
+            Store.saveUser(p); state.tab = 'home'; render();
+          });
+        });
+        return;
+      }
+
+      // register or guest need name + phone
+      var name = (el('au-name').value || '').trim();
+      var phone = (el('au-phone').value || '').trim();
+      if (!name) return fail('Please enter your name');
+      if (!phone) return fail('Please enter your phone number');
+      var extra = { name: name, phone: phone };
+      if (role === 'driver') {
+        extra.vehicle = (el('au-vehicle') && el('au-vehicle').value.trim()) || 'My tanker';
+        extra.capacityL = parseInt(el('au-capacity') && el('au-capacity').value, 10) || 9000;
+      }
+
+      if (mode === 'guest') {
+        extra.account = false;
+        DB.signInGuest(function (err, uid) {
+          if (err) return fail(authErr(err));
+          finishProfile(uid, extra);
+        });
+      } else { // register
+        var em = (el('au-email').value || '').trim();
+        var pw = el('au-pass').value || '';
+        if (!em || pw.length < 6) return fail('Enter an email and a 6+ character password');
+        extra.account = true; extra.email = em;
+        DB.register(em, pw, function (err, uid) {
+          if (err) return fail(authErr(err));
+          finishProfile(uid, extra);
+        });
+      }
+    });
+  }
+
+  function authErr(e) {
+    var c = (e && e.code) || '';
+    if (c === 'auth/operation-not-allowed') return 'Email sign-in is not enabled in Firebase yet';
+    if (c === 'auth/email-already-in-use') return 'That email already has an account — use Sign in';
+    if (c === 'auth/invalid-email') return 'That email looks invalid';
+    if (c === 'auth/weak-password') return 'Password must be at least 6 characters';
+    if (c === 'auth/wrong-password' || c === 'auth/invalid-credential') return 'Wrong email or password';
+    if (c === 'auth/user-not-found') return 'No account with that email';
+    if (c === 'auth/network-request-failed') return 'Network error — check your connection';
+    return (e && e.message) || 'Something went wrong';
+  }
+
+  // shared role selector + driver fields
+  function roleGridHtml(sel) {
+    return '<label>I want to use AquaDrive as</label>' +
+      '<div class="role-grid">' +
+        '<button type="button" class="role-card' + (sel === 'customer' ? ' selected' : '') + '" data-role="customer">' +
+          '<span class="role-ico">🏠</span><b>Customer</b><small>I need water delivered</small></button>' +
+        '<button type="button" class="role-card' + (sel === 'driver' ? ' selected' : '') + '" data-role="driver">' +
+          '<span class="role-ico">🚛</span><b>Tanker Driver</b><small>I deliver water</small></button>' +
+      '</div>';
+  }
+  function wireRoleGrid(onChange) {
+    var role = 'customer';
+    document.querySelectorAll('.role-card').forEach(function (c) {
+      c.addEventListener('click', function () {
+        document.querySelectorAll('.role-card').forEach(function (x) { x.classList.remove('selected'); });
+        c.classList.add('selected');
+        role = c.dataset.role;
+        onChange && onChange(role);
+      });
+    });
+    return function () { return role; };
+  }
+  function driverFieldsHtml() {
+    return '<div class="driver-fields">' +
+      '<label>Tanker / vehicle</label><input id="au-vehicle" type="text" placeholder="e.g. Hino 3000 Gal Tanker" />' +
+      '<label>Capacity (litres)</label><input id="au-capacity" type="number" min="500" step="100" value="9000" />' +
+      '</div>';
+  }
+  function addDriverFieldsTo(user) {
+    if (user.role !== 'driver') return;
+    var v = el('au-vehicle');
+    var cap = el('au-capacity');
+    user.vehicle = (v && v.value.trim()) || 'My tanker';
+    user.capacityL = parseInt(cap && cap.value, 10) || 9000;
   }
 
   // ---------------- CUSTOMER: NEW REQUEST ----------------
@@ -877,20 +1048,23 @@
   }
 
   // ---------------- DRIVER MODE ----------------
-  function myDriverId() { return 'self_' + Store.getUser().id; }
+  // Driver id == the user's id (== Firebase UID in cloud mode), so that
+  // ownership security rules (offer.driverId === auth.uid) hold.
+  function myDriverId() { return Store.getUser().id; }
   function myOfferOn(r) {
     var id = myDriverId();
     return (r.offers || []).some(function (o) { return o.driverId === id; });
   }
   function ensureSelfDriver(user) {
-    var drv = Store.getDriver('self_' + user.id);
+    var drv = Store.getDriver(user.id);
     if (!drv) {
       drv = {
-        id: 'self_' + user.id, name: user.name, phone: user.phone,
-        vehicle: 'My tanker', capacityL: 9000, waterTypes: ['Sweet', 'Bore', 'RO'],
+        id: user.id, name: user.name, phone: user.phone,
+        vehicle: user.vehicle || 'My tanker', capacityL: user.capacityL || 9000,
+        waterTypes: ['Sweet', 'Bore', 'RO'],
         ratingSum: 0, ratingCount: 0, completed: 0, isSeed: false
       };
-      Store.upsertDriver(drv);
+      DB.registerDriver(drv);
     }
     return drv;
   }
@@ -1138,8 +1312,13 @@
     var user = Store.getUser();
     var myReviews = [];
     // If user has acted as a driver, surface their received reviews.
-    var selfDrv = Store.getDriver('self_' + user.id);
+    var selfDrv = Store.getDriver(user.id);
     if (selfDrv) myReviews = Store.reviewsForDriver(selfDrv.id);
+
+    var acctLine = DB.isCloud()
+      ? (user.account ? esc(user.email || 'Account') : 'Guest (this device)')
+      : 'Offline (this device)';
+    var canInstall = !isStandalone();
 
     setView(
       '<div class="screen list-screen profile">' +
@@ -1157,18 +1336,20 @@
               '<button class="seg ' + (user.role === 'driver' ? 'on' : '') + '" data-setrole="driver">Driver</button>' +
             '</div>' +
           '</div>' +
+          '<div class="row-between"><span>Account</span><b>' + acctLine + '</b></div>' +
           '<div class="row-between"><span>Payment</span><b>Cash on delivery</b></div>' +
-          '<div class="row-between"><span>Data storage</span><b>This browser only</b></div>' +
+          '<div class="row-between"><span>Sync</span><b>' + (DB.isCloud() ? 'Live (cross-device)' : 'Offline') + '</b></div>' +
         '</div>' +
 
         (myReviews.length ? ('<h3 class="screen-title">Reviews about you</h3>' +
           myReviews.map(reviewRow).join('')) : '') +
 
         '<div class="card">' +
-          '<button id="edit-prof" class="btn-secondary block">Edit name / phone</button>' +
-          '<button id="reset-data" class="btn-danger block">Clear all data</button>' +
+          (canInstall ? '<button id="install-app" class="btn-secondary block">📲 Install app</button>' : '') +
+          (DB.isCloud() ? '<button id="sign-out" class="btn-secondary block">Sign out</button>' : '<button id="edit-prof" class="btn-secondary block">Edit name / phone</button>') +
+          '<button id="reset-data" class="btn-danger block">Clear local data</button>' +
         '</div>' +
-        '<p class="fineprint center">AquaDrive · demo app · no server, no database</p>' +
+        '<p class="fineprint center">AquaDrive · Cash on delivery</p>' +
       '</div>'
     );
 
@@ -1176,6 +1357,8 @@
       b.addEventListener('click', function () {
         user.role = b.dataset.setrole;
         Store.saveUser(user);
+        if (DB.isCloud()) DB.saveProfile(user.id, user);
+        if (user.role === 'driver') ensureSelfDriver(user);
         // tear down any active realtime watches when changing role
         stopCustomerWatch(); stopDriverWatch(); stopDriverTrip();
         Object.keys(state.bidWatch).forEach(clearBidWatch);
@@ -1185,13 +1368,19 @@
         toast('Switched to ' + user.role + ' mode');
       });
     });
-    el('edit-prof').addEventListener('click', function () {
+    if (el('install-app')) el('install-app').addEventListener('click', triggerInstall);
+    if (el('sign-out')) el('sign-out').addEventListener('click', function () {
+      stopCustomerWatch(); stopDriverWatch(); stopDriverTrip();
+      Object.keys(state.bidWatch).forEach(clearBidWatch);
       Store.clearUser();
-      // re-seed name into onboarding by clearing user; keep other data
+      DB.signOut(function () { state.tab = 'home'; state.activeRequestId = null; render(); toast('Signed out'); });
+    });
+    if (el('edit-prof')) el('edit-prof').addEventListener('click', function () {
+      Store.clearUser();
       renderOnboarding();
     });
     el('reset-data').addEventListener('click', function () {
-      if (confirm('Clear all AquaDrive data in this browser? This cannot be undone.')) {
+      if (confirm('Clear all AquaDrive data on this device? This cannot be undone.')) {
         Store.resetAll();
         location.reload();
       }
@@ -1271,8 +1460,60 @@
   // ===================================================================
   // INIT
   // ===================================================================
+  // ---------------- PWA install ----------------
+  var deferredPrompt = null;
+  var installDismissed = false;
+
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  }
+  function isIOS() {
+    return /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  }
+  function setupInstallPrompt() {
+    window.addEventListener('beforeinstallprompt', function (e) {
+      e.preventDefault();
+      deferredPrompt = e;
+      if (!installDismissed && !isStandalone()) el('install-banner').classList.remove('hidden');
+    });
+    window.addEventListener('appinstalled', function () {
+      deferredPrompt = null;
+      el('install-banner').classList.add('hidden');
+      toast('AquaDrive installed 🎉');
+    });
+  }
+  function triggerInstall() {
+    if (deferredPrompt) {
+      el('install-banner').classList.add('hidden');
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function () { deferredPrompt = null; });
+    } else if (isIOS()) {
+      openModal('<div class="review"><div class="avatar xl">📲</div><h2>Install AquaDrive</h2>' +
+        '<p class="muted">In Safari, tap the <b>Share</b> button, then <b>“Add to Home Screen”</b>.</p>' +
+        '<button class="btn-secondary block close-modal">Got it</button></div>');
+      document.querySelectorAll('.close-modal').forEach(function (b) { b.addEventListener('click', closeModal); });
+    } else if (isStandalone()) {
+      toast('Already installed ✓');
+    } else {
+      toast('Use your browser menu → Install / Add to Home screen');
+    }
+  }
+
+  // resolve the cloud user from the persisted Firebase session
+  function resolveCloudUser(done) {
+    var uid = DB.currentUid();
+    if (!uid) { Store.clearUser(); done(); return; }   // not signed in → auth screen
+    var u = Store.getUser();
+    if (u && u.id === uid) { done(); return; }          // cached profile matches session
+    DB.loadProfile(uid, function (p) {
+      if (p) Store.saveUser(p); else Store.clearUser();  // signed in but no profile → onboarding
+      done();
+    });
+  }
+
   function init() {
     SeedData.run();
+    setupInstallPrompt();
 
     // bottom nav
     document.querySelectorAll('#bottomnav .nav-btn').forEach(function (b) {
@@ -1282,18 +1523,35 @@
       });
     });
     el('brand-link').addEventListener('click', function () { state.tab = 'home'; render(); });
+    el('install-btn').addEventListener('click', triggerInstall);
+    el('install-dismiss').addEventListener('click', function () {
+      el('install-banner').classList.add('hidden'); installDismissed = true;
+    });
 
     window.addEventListener('storage', onStorage);
 
-    render(); // draw immediately in local mode while the backend is decided
+    render(); // splash while the backend is decided
     DB.init(function (mode) {
       if (mode === 'cloud') {
         console.info('AquaDrive: connected to Firebase (cloud mode)');
-        // if a driver is on the home screen, start watching open requests
-        var u = Store.getUser();
-        if (u && u.role === 'driver' && state.tab === 'home') startDriverWatch();
+        // react to later auth changes (e.g. sign-out from another tab)
+        DB.onAuth(function () {
+          resolveCloudUser(function () {
+            stopCustomerWatch(); stopDriverWatch(); stopDriverTrip();
+            state.activeRequestId = null;
+            render();
+          });
+        });
+        resolveCloudUser(function () {
+          state.booting = false;
+          var u = Store.getUser();
+          if (u && u.role === 'driver' && state.tab === 'home') startDriverWatch();
+          render();
+        });
+      } else {
+        state.booting = false;
+        render();
       }
-      render();
     });
   }
 

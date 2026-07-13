@@ -305,6 +305,23 @@ input:focus, select:focus, textarea:focus { border-color: var(--lime-dark); back
 .pill-btn.call { background: var(--lime); }
 .pill-btn:active { transform: scale(.98); }
 
+/* ---------- install banner ---------- */
+.install-banner {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  background: var(--ink); color: #fff; padding: 10px 12px;
+}
+.install-banner .ib-icon { font-size: 22px; }
+.install-banner .ib-text { flex: 1; line-height: 1.2; }
+.install-banner .ib-text small { display: block; color: var(--gray-light); font-size: 11px; }
+.install-banner .ib-install { background: var(--lime); color: #000; border: 0; border-radius: 10px; padding: 9px 14px; font-weight: 800; cursor: pointer; }
+.install-banner .ib-dismiss { background: none; border: 0; color: var(--gray-light); font-size: 16px; cursor: pointer; padding: 4px 6px; }
+
+/* ---------- auth screen extras ---------- */
+.splash { justify-content: center; }
+.auth-tabs { width: 100%; margin-bottom: 14px; }
+.auth-tabs .seg { flex: 1; }
+.driver-fields { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 4px; }
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed; left: 50%; bottom: 84px; translate: -50% 20px;

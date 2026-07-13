@@ -1,5 +1,5 @@
 /* AquaDrive service worker — offline app shell (stale-while-revalidate). */
-var CACHE = 'aquadrive-v2';
+var CACHE = 'aquadrive-v3';
 var ASSETS = [
   '.',
   'index.html',

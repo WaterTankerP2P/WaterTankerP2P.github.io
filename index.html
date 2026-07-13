@@ -32,6 +32,14 @@
     <!-- main view (rendered by app.js) -->
     <main id="view" class="view"></main>
 
+    <!-- install app banner (shown when installable) -->
+    <div id="install-banner" class="install-banner hidden">
+      <span class="ib-icon">💧</span>
+      <div class="ib-text"><b>Install AquaDrive</b><small>Add to your home screen</small></div>
+      <button id="install-btn" class="ib-install">Install</button>
+      <button id="install-dismiss" class="ib-dismiss" aria-label="Dismiss">✕</button>
+    </div>
+
     <!-- bottom navigation -->
     <nav id="bottomnav" class="bottomnav hidden">
       <button class="nav-btn active" data-tab="home"><span>🏠</span><small>Home</small></button>
