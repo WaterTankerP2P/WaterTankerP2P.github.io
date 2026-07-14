@@ -49,13 +49,21 @@
 
     /* ---------------- auth (cloud only) ---------------- */
     currentUid: function () { return this.isCloud() ? AquaCloud.currentUid() : null; },
+    userEmail: function () { return this.isCloud() ? AquaCloud.userEmail() : null; },
     onAuth: function (cb) { if (this.isCloud()) AquaCloud.onAuth(cb); },
-    signInGuest: function (cb) { AquaCloud.signInGuest(cb); },
-    register: function (email, pass, cb) { AquaCloud.register(email, pass, cb); },
-    login: function (email, pass, cb) { AquaCloud.login(email, pass, cb); },
+    register: function (email, pass, remember, cb) { AquaCloud.register(email, pass, remember, cb); },
+    login: function (email, pass, remember, cb) { AquaCloud.login(email, pass, remember, cb); },
+    sendReset: function (email, cb) { if (this.isCloud()) AquaCloud.sendReset(email, cb); else cb && cb(null); },
     signOut: function (cb) { if (this.isCloud()) AquaCloud.signOutUser(cb); else { cb && cb(); } },
     saveProfile: function (uid, profile, cb) { if (this.isCloud()) AquaCloud.saveProfile(uid, profile, cb); else { cb && cb(); } },
     loadProfile: function (uid, cb) { if (this.isCloud()) AquaCloud.loadProfile(uid, cb); else cb(null); },
+
+    /* ---------------- driver KYC / admin ---------------- */
+    saveKyc: function (uid, kyc, cb) { if (this.isCloud()) AquaCloud.saveKyc(uid, kyc, cb); else { cb && cb(null); } },
+    loadKyc: function (uid, cb) { if (this.isCloud()) AquaCloud.loadKyc(uid, cb); else cb(null); },
+    setKycStatus: function (uid, status, cb) { if (this.isCloud()) AquaCloud.setKycStatus(uid, status, cb); else { cb && cb(null); } },
+    listKyc: function (cb) { if (this.isCloud()) AquaCloud.listKyc(cb); else cb(null); },
+    amIAdmin: function (cb) { if (this.isCloud()) AquaCloud.amIAdmin(cb); else cb(false); },
 
     /* ---------------- requests / matching ---------------- */
     createRequest: function (req, cb) {

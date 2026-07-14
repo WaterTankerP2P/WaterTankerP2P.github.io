@@ -1,5 +1,5 @@
 /* AquaDrive service worker — offline app shell (stale-while-revalidate). */
-var CACHE = 'aquadrive-v4';
+var CACHE = 'aquadrive-v5';
 var ASSETS = [
   '.',
   'index.html',
@@ -9,7 +9,9 @@ var ASSETS = [
   'js/sim.js',
   'js/geo.js',
   'js/firebase-config.js',
+  'js/email-config.js',
   'js/cloud.js',
+  'js/otp.js',
   'js/data.js',
   'js/app.js',
   'manifest.webmanifest',

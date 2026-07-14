@@ -45,6 +45,13 @@
     "reviews": {
       ".read": "auth != null",
       ".write": "auth != null"
+    },
+    "kyc": {
+      ".read": "auth != null && auth.token.email === 'ADMIN_EMAIL_HERE'",
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.email === 'ADMIN_EMAIL_HERE')",
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'ADMIN_EMAIL_HERE')"
+      }
     }
   }
 }

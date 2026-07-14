@@ -179,11 +179,11 @@
     });
   }
 
-  // Cloud mode: real accounts (email + password) or guest, separate per role.
+  // Cloud mode: real email + password accounts, separate per role.
   function renderAuthScreen() {
     el('topbar').classList.add('hidden');
     el('bottomnav').classList.add('hidden');
-    var mode = 'register'; // register | login | guest
+    var mode = 'register'; // register | login
     setView(
       '<div class="onboard">' +
         '<div class="brand-big"><span class="logo-drop">💧</span><h1>AquaDrive</h1>' +
@@ -192,11 +192,12 @@
           '<div class="switch-roles auth-tabs">' +
             '<button class="seg on" data-mode="register">Create account</button>' +
             '<button class="seg" data-mode="login">Sign in</button>' +
-            '<button class="seg" data-mode="guest">Guest</button>' +
           '</div>' +
           '<div id="auth-role">' + roleGridHtml('customer') + '</div>' +
           '<div id="auth-fields"></div>' +
+          '<label class="remember"><input type="checkbox" id="au-remember" checked /> <span>Remember me on this device</span></label>' +
           '<button id="auth-go" class="btn-primary block">Create account</button>' +
+          '<p class="fineprint"><a href="#" id="forgot-link">Forgot password?</a></p>' +
           '<p id="auth-note" class="fineprint">Cash on delivery only · Synced across devices</p>' +
         '</div>' +
       '</div>'
@@ -210,7 +211,8 @@
         b.classList.add('on');
         mode = b.dataset.mode;
         el('auth-role').style.display = (mode === 'login') ? 'none' : '';
-        el('auth-go').textContent = mode === 'register' ? 'Create account' : (mode === 'login' ? 'Sign in' : 'Continue as guest');
+        el('forgot-link').parentNode.style.display = (mode === 'login') ? '' : 'none';
+        el('auth-go').textContent = mode === 'register' ? 'Create account' : 'Sign in';
         renderAuthFields();
       });
     });
@@ -218,41 +220,37 @@
     function renderAuthFields() {
       var role = getRole();
       var html = '';
-      if (mode !== 'login') {
+      if (mode === 'register') {
         html += '<label>Your name</label><input id="au-name" type="text" placeholder="e.g. Umair Ahmed" autocomplete="name" />' +
                 '<label>Phone number</label><input id="au-phone" type="tel" placeholder="e.g. +92 300 1234567" autocomplete="tel" />';
         if (role === 'driver') html += driverFieldsHtml();
       }
-      if (mode !== 'guest') {
-        html += '<label>Email</label><input id="au-email" type="email" placeholder="you@example.com" autocomplete="email" />' +
-                '<label>Password</label><input id="au-pass" type="password" placeholder="At least 6 characters" autocomplete="' +
-                (mode === 'register' ? 'new-password' : 'current-password') + '" />';
-      }
+      html += '<label>Email</label><input id="au-email" type="email" placeholder="you@example.com" autocomplete="email" />' +
+              '<label>Password</label><input id="au-pass" type="password" placeholder="' +
+              (mode === 'register' ? '8+ letters and numbers' : 'Your password') + '" autocomplete="' +
+              (mode === 'register' ? 'new-password' : 'current-password') + '" />';
+      if (mode === 'register') html += '<p class="pw-hint">Use at least 8 characters with both letters and numbers.</p>';
       el('auth-fields').innerHTML = html;
     }
     renderAuthFields();
+    el('forgot-link').parentNode.style.display = 'none';
+
+    el('forgot-link').addEventListener('click', function (e) { e.preventDefault(); doForgotPassword(); });
 
     el('auth-go').addEventListener('click', function () {
       if (!state.cloudReady) { toast('Connecting to server… try again in a moment'); return; }
       var role = getRole();
       var btn = el('auth-go');
-      btn.disabled = true;
+      var remember = el('au-remember').checked;
 
       function fail(msg) { btn.disabled = false; toast(msg); }
-      function finishProfile(uid, extra) {
-        var user = Object.assign({ id: uid, role: role, createdAt: Date.now() }, extra);
-        DB.saveProfile(uid, user);
-        Store.saveUser(user);
-        if (user.role === 'driver') ensureSelfDriver(user);
-        state.tab = 'home';
-        render();
-      }
 
       if (mode === 'login') {
         var email = (el('au-email').value || '').trim();
         var pass = el('au-pass').value || '';
         if (!email || !pass) return fail('Enter email and password');
-        DB.login(email, pass, function (err, uid) {
+        btn.disabled = true;
+        DB.login(email, pass, remember, function (err, uid) {
           if (err) return fail(authErr(err));
           DB.loadProfile(uid, function (p) {
             if (!p) return fail('No profile found — try Create account');
@@ -262,34 +260,101 @@
         return;
       }
 
-      // register or guest need name + phone
+      // register
       var name = (el('au-name').value || '').trim();
       var phone = (el('au-phone').value || '').trim();
+      var em = (el('au-email').value || '').trim();
+      var pw = el('au-pass').value || '';
       if (!name) return fail('Please enter your name');
       if (!phone) return fail('Please enter your phone number');
-      var extra = { name: name, phone: phone };
+      if (!/^\S+@\S+\.\S+$/.test(em)) return fail('Enter a valid email');
+      if (!passwordValid(pw)) return fail('Password needs 8+ characters with letters and numbers');
+
+      var extra = { name: name, phone: phone, account: true, email: em };
       if (role === 'driver') {
         extra.vehicle = (el('au-vehicle') && el('au-vehicle').value.trim()) || 'My tanker';
         extra.capacityL = parseInt(el('au-capacity') && el('au-capacity').value, 10) || 9000;
+        extra.kyc = 'unsubmitted';
       }
 
-      if (mode === 'guest') {
-        extra.account = false;
-        DB.signInGuest(function (err, uid) {
-          if (err) return fail(authErr(err));
-          finishProfile(uid, extra);
+      // Verify the email with a 6-digit code before creating the account.
+      if (AquaOTP.enabled()) {
+        btn.disabled = true; btn.textContent = 'Sending code…';
+        AquaOTP.request(em, { user_name: name }, function (err) {
+          btn.disabled = false; btn.textContent = 'Create account';
+          if (err) { toast('Could not send the code — check the email and try again'); return; }
+          renderOtpVerify(em, function () {
+            createAccount(em, pw, remember, role, extra);
+          });
         });
-      } else { // register
-        var em = (el('au-email').value || '').trim();
-        var pw = el('au-pass').value || '';
-        if (!em || pw.length < 6) return fail('Enter an email and a 6+ character password');
-        extra.account = true; extra.email = em;
-        DB.register(em, pw, function (err, uid) {
-          if (err) return fail(authErr(err));
-          finishProfile(uid, extra);
-        });
+      } else {
+        createAccount(em, pw, remember, role, extra);
       }
     });
+  }
+
+  function passwordValid(pw) {
+    return typeof pw === 'string' && pw.length >= 8 && /[A-Za-z]/.test(pw) && /[0-9]/.test(pw);
+  }
+
+  function createAccount(email, pass, remember, role, extra) {
+    DB.register(email, pass, remember, function (err, uid) {
+      if (err) { toast(authErr(err)); renderAuthScreen(); return; }
+      var user = Object.assign({ id: uid, role: role, createdAt: Date.now() }, extra);
+      DB.saveProfile(uid, user);
+      Store.saveUser(user);
+      if (user.role === 'driver') ensureSelfDriver(user);
+      state.tab = 'home';
+      render(); // drivers land on the home screen with the "verify CNIC" banner
+      toast(role === 'driver' ? 'Account created — verify your CNIC to accept jobs' : 'Welcome to AquaDrive!');
+    });
+  }
+
+  // 6-digit email verification screen
+  function renderOtpVerify(email, onVerified) {
+    setView(
+      '<div class="onboard">' +
+        '<div class="brand-big"><span class="logo-drop">✉️</span><h1>Verify email</h1>' +
+          '<p class="tag">We sent a 6-digit code to<br>' + esc(email) + '</p></div>' +
+        '<div class="card">' +
+          '<label>Enter code</label>' +
+          '<input id="otp-input" type="text" inputmode="numeric" maxlength="6" placeholder="______" class="otp-box" />' +
+          '<button id="otp-verify" class="btn-primary block">Verify & continue</button>' +
+          '<p class="fineprint"><a href="#" id="otp-resend">Resend code</a> · <a href="#" id="otp-back">Back</a></p>' +
+        '</div>' +
+      '</div>'
+    );
+    el('otp-input').focus();
+    el('otp-verify').addEventListener('click', function () {
+      var code = (el('otp-input').value || '').trim();
+      if (AquaOTP.verify(email, code)) { onVerified(); }
+      else { toast('Incorrect or expired code'); }
+    });
+    el('otp-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') el('otp-verify').click(); });
+    el('otp-resend').addEventListener('click', function (e) {
+      e.preventDefault();
+      AquaOTP.request(email, {}, function (err) { toast(err ? 'Could not resend' : 'New code sent'); });
+    });
+    el('otp-back').addEventListener('click', function (e) { e.preventDefault(); AquaOTP.clear(); renderAuthScreen(); });
+  }
+
+  // Forgot password → verify email by code, then Firebase's secure reset link.
+  function doForgotPassword() {
+    var email = (el('au-email') && el('au-email').value || '').trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) { toast('Type your email above first, then tap Forgot password'); return; }
+    if (!AquaOTP.enabled()) { sendReset(email); return; }
+    toast('Sending code…');
+    AquaOTP.request(email, {}, function (err) {
+      if (err) { toast('Could not send code'); return; }
+      renderOtpVerify(email, function () { sendReset(email); });
+    });
+    function sendReset(em) {
+      DB.sendReset(em, function (e2) {
+        if (e2) { toast(authErr(e2)); renderAuthScreen(); return; }
+        renderAuthScreen();
+        toast('Verified! Check your email for a link to set a new password.');
+      });
+    }
   }
 
   function authErr(e) {
@@ -338,6 +403,165 @@
     var cap = el('au-capacity');
     user.vehicle = (v && v.value.trim()) || 'My tanker';
     user.capacityL = parseInt(cap && cap.value, 10) || 9000;
+  }
+
+  // ---------------- DRIVER KYC (CNIC) ----------------
+  function cnicDigits(s) { return String(s || '').replace(/\D/g, ''); }
+  function cnicValid(s) { return cnicDigits(s).length === 13; }
+  function formatCnic(s) {
+    var d = cnicDigits(s).slice(0, 13);
+    if (d.length > 12) return d.slice(0, 5) + '-' + d.slice(5, 12) + '-' + d.slice(12);
+    if (d.length > 5) return d.slice(0, 5) + '-' + d.slice(5);
+    return d;
+  }
+
+  // Resize + compress an image File to a small JPEG data-URL (keeps the
+  // Realtime DB light; no paid Storage needed). cb(dataUrl).
+  function compressImage(file, maxDim, quality, cb) {
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var w = img.width, h = img.height;
+        var scale = Math.min(1, maxDim / Math.max(w, h));
+        var cw = Math.round(w * scale), ch = Math.round(h * scale);
+        var c = document.createElement('canvas');
+        c.width = cw; c.height = ch;
+        c.getContext('2d').drawImage(img, 0, 0, cw, ch);
+        cb(c.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = function () { cb(null); };
+      img.src = reader.result;
+    };
+    reader.onerror = function () { cb(null); };
+    reader.readAsDataURL(file);
+  }
+
+  // Best-effort OCR (Tesseract.js, loaded on demand). cb(textDigits).
+  var tessLoaded = false;
+  function ocrDigits(dataUrl, cb) {
+    function run() {
+      try {
+        global.Tesseract.recognize(dataUrl, 'eng')
+          .then(function (r) { cb(cnicDigits(r.data.text)); })
+          .catch(function () { cb(null); });
+      } catch (e) { cb(null); }
+    }
+    if (tessLoaded && global.Tesseract) { run(); return; }
+    var to = setTimeout(function () { cb(null); }, 20000);
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.async = true;
+    s.onload = function () { clearTimeout(to); tessLoaded = true; run(); };
+    s.onerror = function () { clearTimeout(to); cb(null); };
+    document.head.appendChild(s);
+  }
+
+  // Driver identity-verification screen (front + back CNIC photos).
+  function startKyc(user) {
+    el('topbar').classList.remove('hidden');
+    el('bottomnav').classList.remove('hidden');
+    setView(
+      '<div class="screen list-screen">' +
+        '<h2 class="screen-title">Driver verification</h2>' +
+        '<div class="card">' +
+          '<p class="muted small">To accept jobs you must verify your CNIC. Your photos are stored privately and reviewed by our team.</p>' +
+          '<label>CNIC number</label>' +
+          '<input id="kyc-cnic" type="text" inputmode="numeric" placeholder="xxxxx-xxxxxxx-x" maxlength="15" />' +
+          '<label>CNIC front photo</label>' +
+          '<input id="kyc-front" type="file" accept="image/*" capture="environment" />' +
+          '<label>CNIC back photo</label>' +
+          '<input id="kyc-back" type="file" accept="image/*" capture="environment" />' +
+          '<p id="kyc-status" class="pw-hint"></p>' +
+          '<button id="kyc-submit" class="btn-primary block">Submit for verification</button>' +
+          '<button id="kyc-later" class="link-btn block">Skip for now</button>' +
+        '</div>' +
+      '</div>'
+    );
+    el('kyc-cnic').addEventListener('input', function () { el('kyc-cnic').value = formatCnic(el('kyc-cnic').value); });
+    el('kyc-later').addEventListener('click', function () { render(); });
+    el('kyc-submit').addEventListener('click', function () { submitKyc(user); });
+  }
+
+  function submitKyc(user) {
+    var cnic = el('kyc-cnic').value;
+    var front = el('kyc-front').files[0];
+    var back = el('kyc-back').files[0];
+    if (!cnicValid(cnic)) { toast('Enter a valid 13-digit CNIC number'); return; }
+    if (!front || !back) { toast('Upload both front and back photos'); return; }
+    var statusEl = el('kyc-status');
+    var btn = el('kyc-submit'); btn.disabled = true;
+    statusEl.textContent = 'Processing images…';
+
+    compressImage(front, 1000, 0.55, function (frontData) {
+      compressImage(back, 1000, 0.55, function (backData) {
+        if (!frontData || !backData) { btn.disabled = false; toast('Could not read the images'); return; }
+        statusEl.textContent = 'Reading CNIC (best effort)…';
+        // Best-effort OCR check that the typed number appears on the front image.
+        ocrDigits(frontData, function (digits) {
+          var typed = cnicDigits(cnic);
+          var ocrMatched = !!(digits && digits.indexOf(typed) !== -1);
+          var kyc = {
+            uid: user.id, name: user.name, phone: user.phone,
+            cnic: cnic, front: frontData, back: backData,
+            ocrMatched: ocrMatched, status: 'pending', ts: Date.now()
+          };
+          DB.saveKyc(user.id, kyc, function (err) {
+            btn.disabled = false;
+            if (err) { toast('Could not save — check your rules are published'); return; }
+            user.kyc = 'pending'; Store.saveUser(user); DB.saveProfile(user.id, user);
+            state.tab = 'home'; render();
+            toast(ocrMatched ? 'Submitted — CNIC number matched ✓ (pending admin approval)'
+                             : 'Submitted for manual review (photo unclear for auto-check)');
+          });
+        });
+      });
+    });
+  }
+
+  // A driver reads their own /kyc status (the admin can't write their profile).
+  function refreshDriverKyc(cb) {
+    var u = Store.getUser();
+    if (!DB.isCloud() || !u || u.role !== 'driver') { cb && cb(); return; }
+    DB.loadKyc(u.id, function (k) {
+      if (k && k.status && k.status !== u.kyc) {
+        u.kyc = k.status; Store.saveUser(u); DB.saveProfile(u.id, u);
+      }
+      cb && cb();
+    });
+  }
+
+  // ---------------- ADMIN: review driver CNICs ----------------
+  function renderAdmin() {
+    setView('<div class="screen list-screen"><h2 class="screen-title">Driver verification — admin</h2>' +
+      '<div id="admin-list"><p class="muted">Loading…</p></div></div>');
+    DB.listKyc(function (list) {
+      var box = el('admin-list');
+      if (!box) return;
+      if (!list) { box.innerHTML = '<p class="muted">You are not an admin, or rules are not published.</p>'; return; }
+      if (!list.length) { box.innerHTML = '<div class="empty"><span class="empty-ico">📋</span><p>No submissions yet.</p></div>'; return; }
+      list.sort(function (a, b) { return (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1); });
+      box.innerHTML = list.map(function (k) {
+        var badge = { pending: 'st searching', verified: 'st done', rejected: 'st cancelled' }[k.status] || 'st';
+        return '<div class="kyc-card">' +
+          '<div class="hist-top"><b>' + esc(k.name || '(driver)') + '</b><span class="' + badge + '">' + esc(k.status) + '</span></div>' +
+          '<div class="muted small">CNIC ' + esc(k.cnic || '—') + ' · ' + (k.ocrMatched ? 'auto-match ✓' : 'auto-match ✗') + ' · ' + esc(k.phone || '') + '</div>' +
+          '<div class="kyc-imgs">' +
+            (k.front ? '<img src="' + k.front + '" alt="front" />' : '') +
+            (k.back ? '<img src="' + k.back + '" alt="back" />' : '') +
+          '</div>' +
+          (k.status === 'pending' ?
+            '<div class="pb-actions"><button class="pill-btn call" data-approve="' + k.uid + '">✓ Approve</button>' +
+            '<button class="pill-btn" data-reject="' + k.uid + '">✕ Reject</button></div>' : '') +
+        '</div>';
+      }).join('');
+      box.querySelectorAll('[data-approve]').forEach(function (b) {
+        b.addEventListener('click', function () { DB.setKycStatus(b.dataset.approve, 'verified', function () { toast('Approved'); renderAdmin(); }); });
+      });
+      box.querySelectorAll('[data-reject]').forEach(function (b) {
+        b.addEventListener('click', function () { DB.setKycStatus(b.dataset.reject, 'rejected', function () { toast('Rejected'); renderAdmin(); }); });
+      });
+    });
   }
 
   // ---------------- CUSTOMER: NEW REQUEST ----------------
@@ -1108,8 +1332,17 @@
       ? 'Live: requests from customers on any device appear here. Send your price; if accepted you\'ll get a delivery screen with live location sharing.'
       : 'Tip: open this app in another browser tab as a Customer to see your offers arrive in real time.';
 
+    // CNIC verification banner (drivers must be verified to bid)
+    var verifyBanner = '';
+    if (DB.isCloud() && (user.kyc || 'unsubmitted') !== 'verified') {
+      var msg = { unsubmitted: 'Verify your CNIC to start accepting jobs.', pending: 'CNIC submitted — waiting for admin approval.', rejected: 'CNIC was rejected — please resubmit.' }[user.kyc || 'unsubmitted'];
+      verifyBanner = '<div class="verify-banner"><div><b>🛡️ Verification ' + esc(user.kyc || 'required') + '</b><small>' + esc(msg) + '</small></div>' +
+        (user.kyc !== 'pending' ? '<button id="kyc-go" class="ib-install">Verify</button>' : '') + '</div>';
+    }
+
     setView(
       '<div class="screen driver-home">' +
+        verifyBanner +
         '<div class="dh-head"><h2>Open requests</h2>' +
           '<span class="muted">Send your price — customer picks (COD)' + (DB.isCloud() ? ' · live' : '') + '</span></div>' +
         list +
@@ -1117,6 +1350,7 @@
       '</div>'
     );
 
+    if (el('kyc-go')) el('kyc-go').addEventListener('click', function () { startKyc(user); });
     document.querySelectorAll('[data-bid]').forEach(function (b) {
       b.addEventListener('click', function () { sendDriverBid(b.dataset.bid); });
     });
@@ -1126,6 +1360,11 @@
 
   function sendDriverBid(reqId) {
     var user = Store.getUser();
+    // Cloud drivers must be CNIC-verified before bidding.
+    if (DB.isCloud() && (user.kyc || 'unsubmitted') !== 'verified') {
+      toast('Please complete CNIC verification before sending offers');
+      startKyc(user); return;
+    }
     var req = Store.getRequest(reqId);
     if (!req || req.status !== 'searching') { toast('Request no longer open'); render(); return; }
     var price = parseInt(el('bid-' + reqId).value, 10) || req.offerPrice;
@@ -1321,10 +1560,19 @@
     var selfDrv = Store.getDriver(user.id);
     if (selfDrv) myReviews = Store.reviewsForDriver(selfDrv.id);
 
-    var acctLine = DB.isCloud()
-      ? (user.account ? esc(user.email || 'Account') : 'Guest (this device)')
-      : 'Offline (this device)';
+    var acctLine = DB.isCloud() ? esc(user.email || 'Account') : 'Offline (this device)';
     var canInstall = !isStandalone();
+
+    var kycCard = '';
+    if (DB.isCloud() && user.role === 'driver') {
+      var ks = user.kyc || 'unsubmitted';
+      var kycLabel = { unsubmitted: 'Not submitted', pending: 'Pending review', verified: 'Verified ✓', rejected: 'Rejected — please resubmit' }[ks] || ks;
+      var kycClass = { verified: 'st done', pending: 'st searching', rejected: 'st cancelled' }[ks] || 'st';
+      kycCard = '<div class="card">' +
+        '<div class="row-between"><span>CNIC verification</span><span class="' + kycClass + '">' + kycLabel + '</span></div>' +
+        (ks !== 'verified' ? '<button id="kyc-open" class="btn-secondary block">' + (ks === 'pending' ? 'Update CNIC documents' : 'Verify your CNIC') + '</button>' : '') +
+        '</div>';
+    }
 
     setView(
       '<div class="screen list-screen profile">' +
@@ -1346,6 +1594,9 @@
           '<div class="row-between"><span>Payment</span><b>Cash on delivery</b></div>' +
           '<div class="row-between"><span>Sync</span><b>' + (DB.isCloud() ? 'Live (cross-device)' : 'Offline') + '</b></div>' +
         '</div>' +
+
+        kycCard +
+        '<div id="admin-card"></div>' +
 
         (myReviews.length ? ('<h3 class="screen-title">Reviews about you</h3>' +
           myReviews.map(reviewRow).join('')) : '') +
@@ -1371,9 +1622,22 @@
         state.tab = 'home';
         state.activeRequestId = null;
         render();
+        if (user.role === 'driver') refreshDriverKyc(function () { render(); });
         toast('Switched to ' + user.role + ' mode');
       });
     });
+    if (el('kyc-open')) el('kyc-open').addEventListener('click', function () { startKyc(user); });
+
+    // Admin review link — only appears if this account can read the KYC list.
+    if (DB.isCloud()) {
+      DB.amIAdmin(function (isAdmin) {
+        var card = el('admin-card');
+        if (!card || !isAdmin) return;
+        card.innerHTML = '<div class="card"><button id="admin-open" class="btn-secondary block">🛡️ Review driver CNICs (admin)</button></div>';
+        el('admin-open').addEventListener('click', renderAdmin);
+      });
+    }
+
     if (el('install-app')) el('install-app').addEventListener('click', triggerInstall);
     if (el('sign-out')) el('sign-out').addEventListener('click', function () {
       stopCustomerWatch(); stopDriverWatch(); stopDriverTrip();
@@ -1558,6 +1822,7 @@
           var u = Store.getUser();
           if (u && u.role === 'driver' && state.tab === 'home') startDriverWatch();
           render();
+          if (u && u.role === 'driver') refreshDriverKyc(function () { render(); });
         });
       } else {
         // cloud was configured but couldn't connect → fall back to local

@@ -96,17 +96,27 @@
       }
     },
 
-    /* -------- auth (email/password + guest) -------- */
+    /* -------- auth (email/password) -------- */
     currentUid: function () { return _uid; },
+    userEmail: function () { return auth && auth.currentUser ? auth.currentUser.email : null; },
     onAuth: function (cb) { authCb = cb; },
-    signInGuest: function (cb) {
-      auth.signInAnonymously().then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    // remember=true → stay signed in across sessions; false → until tab closes
+    _persist: function (remember) {
+      var P = global.firebase.auth.Auth.Persistence;
+      return auth.setPersistence(remember ? P.LOCAL : P.SESSION).catch(function () {});
     },
-    register: function (email, pass, cb) {
-      auth.createUserWithEmailAndPassword(email, pass).then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    register: function (email, pass, remember, cb) {
+      this._persist(remember).then(function () {
+        return auth.createUserWithEmailAndPassword(email, pass);
+      }).then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
     },
-    login: function (email, pass, cb) {
-      auth.signInWithEmailAndPassword(email, pass).then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    login: function (email, pass, remember, cb) {
+      this._persist(remember).then(function () {
+        return auth.signInWithEmailAndPassword(email, pass);
+      }).then(function (r) { cb(null, r.user.uid); }, function (e) { cb(e); });
+    },
+    sendReset: function (email, cb) {
+      auth.sendPasswordResetEmail(email).then(function () { cb(null); }, function (e) { cb(e); });
     },
     signOutUser: function (cb) {
       auth.signOut().then(function () { cb && cb(); }, function () { cb && cb(); });
@@ -219,6 +229,30 @@
           .filter(function (r) { return r.driverId === driverId; });
         cb(list);
       }, function () { cb([]); });
+    },
+
+    /* -------- driver KYC (CNIC) --------
+     * Stored PRIVATELY at /kyc/{uid}; rules restrict read/write to the owner
+     * and the admin. Photos are small compressed data-URLs (no paid Storage). */
+    saveKyc: function (uid, kyc, cb) {
+      db.ref('kyc/' + uid).set(kyc).then(ok(cb), errcb(cb));
+    },
+    loadKyc: function (uid, cb) {
+      db.ref('kyc/' + uid).once('value').then(function (s) { cb(s.val()); }, function () { cb(null); });
+    },
+    setKycStatus: function (uid, status, cb) {
+      db.ref('kyc/' + uid + '/status').set(status).then(ok(cb), errcb(cb));
+    },
+    // admin-only: list all KYC records (denied for non-admins → cb(null))
+    listKyc: function (cb) {
+      db.ref('kyc').once('value').then(function (s) {
+        var v = s.val() || {};
+        cb(Object.keys(v).map(function (k) { v[k].uid = k; return v[k]; }));
+      }, function () { cb(null); });
+    },
+    // am I the admin? Probe the admin-only listing; success ⇒ admin.
+    amIAdmin: function (cb) {
+      db.ref('kyc').limitToFirst(1).once('value').then(function () { cb(true); }, function () { cb(false); });
     },
 
     uid: uid

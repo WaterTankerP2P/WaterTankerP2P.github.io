@@ -321,6 +321,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--lime-dark); back
 .auth-tabs { width: 100%; margin-bottom: 14px; }
 .auth-tabs .seg { flex: 1; }
 .driver-fields { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 4px; }
+.pw-hint { font-size: 11.5px; color: var(--gray); margin: 6px 0 2px; }
+.remember { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin: 12px 0; font-weight: 600; }
+.remember input { width: auto; }
+.remember span { font-weight: 600; }
+.btn-secondary.block, .link-btn.block { display: block; width: 100%; margin-top: 8px; }
+.otp-box { text-align: center; font-size: 28px; letter-spacing: 12px; font-weight: 800; padding: 12px; }
+
+/* ---------- driver verification (CNIC / KYC) ---------- */
+.verify-banner { display: flex; align-items: center; gap: 10px; background: #fff3cd; color: #6b5300; padding: 12px 16px; }
+.verify-banner small { display: block; font-weight: 500; }
+.verify-banner .ib-install { margin-left: auto; background: var(--ink); color: var(--lime); }
+.kyc-card { background: #fff; border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow-sm); margin-bottom: 12px; }
+.kyc-imgs { display: flex; gap: 8px; margin: 10px 0; }
+.kyc-imgs img { width: 50%; border-radius: 10px; border: 1px solid var(--line); object-fit: cover; max-height: 130px; }
+input[type="file"] { padding: 9px; font-size: 13px; background: #fafbfb; }
 
 /* ---------- toast ---------- */
 .toast {
